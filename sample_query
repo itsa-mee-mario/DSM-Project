@@ -1,0 +1,74 @@
+SELECT
+  SQLDATE,
+  PARSE_DATE('%Y%m%d', CAST(SQLDATE AS STRING)) AS event_date,
+  ST_GEOGPOINT(ActionGeo_Long, ActionGeo_Lat) AS location_geom,
+  ActionGeo_FullName,
+  ActionGeo_CountryCode,
+  NumArticles,
+  AvgTone,
+  -- Vulnerability-weighted event type with socioeconomic signals
+  CASE
+    WHEN
+      LOWER(Actor1Name) LIKE '%slum%'
+      OR LOWER(Actor1Name) LIKE '%poor%'
+      OR LOWER(Actor2Name) LIKE '%slum%'
+      OR LOWER(Actor2Name) LIKE '%poor%'
+      THEN 'Socioeconomic Vulnerability'
+    WHEN
+      REGEXP_CONTAINS(
+        LOWER(SOURCEURL), 'heatwave|heat wave|wet-bulb|heat index')
+      THEN 'Heat Stress'
+    WHEN REGEXP_CONTAINS(LOWER(SOURCEURL), 'aqi|pm2.5|air quality|smog')
+      THEN 'Air Quality'
+    WHEN
+      LOWER(SOURCEURL) LIKE '%flood%'
+      OR LOWER(SOURCEURL) LIKE '%monsoon%flood%'
+      OR LOWER(Actor1Name) LIKE '%displaced%'
+      OR LOWER(Actor2Name) LIKE '%displaced%'
+      THEN 'Flooding/Displacement'
+    WHEN
+      REGEXP_CONTAINS(
+        LOWER(SOURCEURL), 'drought|water crisis|reservoir low|crop failure')
+      THEN 'Drought/Water Stress'
+    WHEN
+      LOWER(SOURCEURL) LIKE '%cyclone%'
+      OR LOWER(SOURCEURL) LIKE '%depression%'
+      THEN 'Cyclone'
+    ELSE 'Other Climate Signal'
+    END
+    AS event_type,
+  -- High signal indicators
+  CASE
+    WHEN AvgTone <= -5.0 THEN 'High Impact'
+    WHEN NumArticles >= 50 THEN 'High Volume'
+    ELSE 'Routine'
+    END
+    AS signal_strength,
+  SOURCEURL
+FROM `gdelt-bq.gdeltv2.events`
+WHERE
+  ActionGeo_CountryCode = 'IN'
+  AND SQLDATE >= 20260101
+  AND (
+    -- Core climate metrics
+    REGEXP_CONTAINS(
+      LOWER(SOURCEURL), 'heatwave|heat wave|wet-bulb|heat index|aqi|pm2.5|smog')
+    OR
+      -- Vulnerability amplifiers
+      (
+        LOWER(Actor1Name) LIKE '%displaced%'
+        OR LOWER(Actor2Name) LIKE '%displaced%'
+        OR LOWER(Actor1Name) LIKE '%slum%')
+    OR
+      -- Hydrological extremes
+      REGEXP_CONTAINS(
+        LOWER(SOURCEURL),
+        'flood|drought|cyclone|water crisis|crop failure|reservoir low'))
+  -- Noise filters
+  AND LOWER(SOURCEURL) NOT LIKE '%cop%'
+  AND LOWER(SOURCEURL) NOT LIKE '%paris%agreement%'
+  AND AvgTone < 2.0
+  AND NumArticles >= 5
+ORDER BY SQLDATE DESC, NumArticles DESC
+LIMIT 500
+
